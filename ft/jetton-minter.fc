@@ -47,7 +47,7 @@
         return ();
     }
     slice sender_address = cs~load_msg_addr();
-  
+
     int op = in_msg_body~load_uint(32);
     int query_id = in_msg_body~load_uint(64);
 
@@ -74,15 +74,38 @@
         );
         save_data(total_supply - jetton_amount, admin_address, content, jetton_wallet_code);
         slice response_address = in_msg_body~load_msg_addr();
-        if (response_address.preload_uint(2) != 0) {
-          var msg = begin_cell()
-            .store_uint(0x10, 6) ;; nobounce - int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool src:MsgAddress -> 011000
+        cell custom_payload = in_msg_body~load_dict();
+        if (custom_payload.cell_null?()) {
+          if (response_address.preload_uint(2) != 0) {
+            var msg = begin_cell()
+              .store_uint(0x10, 6) ;; nobounce - int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool src:MsgAddress -> 011000
+              .store_slice(response_address)
+              .store_coins(0)
+              .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+              .store_uint(op::excesses(), 32)
+              .store_uint(query_id, 64);
+            send_raw_message(msg.end_cell(), 2 + 64);
+          }
+        } else {
+          int revision = in_msg_body~load_uint(32);
+          slice vote_data = custom_payload.begin_parse();
+          ;; Process vote data here
+          ;; for instance accept votes for votings with id < revision
+          ;; but don't forget about gas guarantees (!), if there is no enough
+          ;; gas - throw early
+          int new_revision = now();
+          var msg_body = begin_cell()
+            .store_uint(op::internal_transfer(), 32)
+            .store_uint(query_id, 64)
+            .store_coins(jetton_amount)
+            .store_slice(from_address)
             .store_slice(response_address)
+            .store_ref(begin_cell().store_uint(new_revision, 32).end_cell())
             .store_coins(0)
-            .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
-            .store_uint(op::excesses(), 32)
-            .store_uint(query_id, 64);
-          send_raw_message(msg.end_cell(), 2 + 64);
+            .store_uint(0, 1)
+            .end_cell();
+
+          mint_tokens(from_address, jetton_wallet_code, jetton_amount, msg_body);
         }
         return ();
     }

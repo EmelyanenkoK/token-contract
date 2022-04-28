@@ -38,7 +38,7 @@ int gas_consumption() asm "10000000 PUSHINT"; ;; 0.01 TON
                      response_address:MsgAddress
                      cross_wallet_interaction:^Cell
                      forward_ton_amount:(VarUInteger 16)
-                     forward_payload:(Either Cell ^Cell) 
+                     forward_payload:(Either Cell ^Cell)
                      = InternalMsgBody;
 -}
 
@@ -97,7 +97,7 @@ int gas_consumption() asm "10000000 PUSHINT"; ;; 0.01 TON
                      response_address:MsgAddress
                      cross_wallet_interaction:^Cell
                      forward_ton_amount:(VarUInteger 16)
-                     forward_payload:(Either Cell ^Cell) 
+                     forward_payload:(Either Cell ^Cell)
                      = InternalMsgBody;
 -}
 
@@ -164,8 +164,7 @@ int gas_consumption() asm "10000000 PUSHINT"; ;; 0.01 TON
   int query_id = in_msg_body~load_uint(64);
   int jetton_amount = in_msg_body~load_coins();
   slice response_address = in_msg_body~load_msg_addr();
-  ;; ignore custom payload
-  ;; slice custom_payload = in_msg_body~load_dict();
+  cell custom_payload = in_msg_body~load_dict();
   balance -= jetton_amount;
   throw_unless(705, equal_slices(owner_address, sender_address));
   throw_unless(706, balance >= 0);
@@ -176,15 +175,20 @@ int gas_consumption() asm "10000000 PUSHINT"; ;; 0.01 TON
       .store_uint(query_id, 64)
       .store_coins(jetton_amount)
       .store_slice(owner_address)
-      .store_slice(response_address)
-      .end_cell();
+      .store_slice(response_address);
+
+  ifnot(custom_payload.cell_null?()) {
+    ;; probably it will be safer to check allowed custom_payload here
+    ;; that way burns with errors will be stopped asaps
+    msg_body = msg_body.store_ref(custom_payload).store_uint(revision, 32);
+  }
 
   var msg = begin_cell()
     .store_uint(0x18, 6)
     .store_slice(jetton_master_address)
     .store_coins(0)
     .store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
-    .store_ref(msg_body);
+    .store_ref(msg_body.end_cell());
 
   send_raw_message(msg.end_cell(), 64);
 
@@ -232,7 +236,7 @@ int gas_consumption() asm "10000000 PUSHINT"; ;; 0.01 TON
     return ();
   }
 
-  if (op == op::burn()) { ;; burn
+  if (op == op::burn()) { ;; burn and votings
     burn_tokens(in_msg_body, sender_address, msg_value, fwd_fee);
     return ();
   }
