@@ -1,3 +1,5 @@
+# IT IS DRAFT, DO NOT USE IN PRODUCTION
+
 # Fungible, Non-Fungible, Semi-Fungible Tokens Smart Contracts
 
 ## NFT (Non-Fungible tokens) in `nft` folder
