@@ -17,16 +17,16 @@ int gas_consumption() asm "10000000 PUSHINT"; ;; 0.01 TON
 
 {-
   Storage
-  storage#_ balance:Coins owner_address:MsgAddressInt jetton_master_address:MsgAddressInt jetton_wallet_code:^Cell = Storage;
+  storage#_ balance:Coins owner_address:MsgAddressInt jetton_master_address:MsgAddressInt revision:uint32 jetton_wallet_code:^Cell = Storage;
 -}
 
-(int, slice, slice, cell) load_data() inline {
+(int, slice, slice, cell, int) load_data() inline {
   slice ds = get_data().begin_parse();
-  return (ds~load_coins(), ds~load_msg_addr(), ds~load_msg_addr(), ds~load_ref());
+  return (ds~load_coins(), ds~load_msg_addr(), ds~load_msg_addr(), ds~load_ref(), ds~load_uint(32));
 }
 
-() save_data (int balance, slice owner_address, slice jetton_master_address, cell jetton_wallet_code) impure inline {
-  set_data(pack_jetton_wallet_data(balance, owner_address, jetton_master_address, jetton_wallet_code));
+() save_data (int balance, slice owner_address, slice jetton_master_address, cell jetton_wallet_code, int revision) impure inline {
+  set_data(pack_jetton_wallet_data(balance, owner_address, jetton_master_address, jetton_wallet_code, revision));
 }
 
 {-
@@ -36,6 +36,7 @@ int gas_consumption() asm "10000000 PUSHINT"; ;; 0.01 TON
            = InternalMsgBody;
   internal_transfer  query_id:uint64 amount:(VarUInteger 16) from:MsgAddress
                      response_address:MsgAddress
+                     cross_wallet_interaction:^Cell
                      forward_ton_amount:(VarUInteger 16)
                      forward_payload:(Either Cell ^Cell) 
                      = InternalMsgBody;
@@ -46,7 +47,7 @@ int gas_consumption() asm "10000000 PUSHINT"; ;; 0.01 TON
   int jetton_amount = in_msg_body~load_coins();
   slice to_owner_address = in_msg_body~load_msg_addr();
   force_chain(to_owner_address);
-  (int balance, slice owner_address, slice jetton_master_address, cell jetton_wallet_code) = load_data();
+  (int balance, slice owner_address, slice jetton_master_address, cell jetton_wallet_code, int revision) = load_data();
   balance -= jetton_amount;
 
   throw_unless(705, equal_slices(owner_address, sender_address));
@@ -70,6 +71,7 @@ int gas_consumption() asm "10000000 PUSHINT"; ;; 0.01 TON
     .store_coins(jetton_amount)
     .store_slice(owner_address)
     .store_slice(response_address)
+    .store_ref(begin_cell().store_uint(revision, 32).end_cell())
     .store_coins(forward_ton_amount)
     .store_slice(either_forward_payload)
     .end_cell();
@@ -87,12 +89,13 @@ int gas_consumption() asm "10000000 PUSHINT"; ;; 0.01 TON
                      ;; msg_fwd_fee(to_wallet, msg_body, state_init, 15)
 
   send_raw_message(msg.end_cell(), 64); ;; revert on errors
-  save_data(balance, owner_address, jetton_master_address, jetton_wallet_code);
+  save_data(balance, owner_address, jetton_master_address, jetton_wallet_code, revision);
 }
 
 {-
   internal_transfer  query_id:uint64 amount:(VarUInteger 16) from:MsgAddress
                      response_address:MsgAddress
+                     cross_wallet_interaction:^Cell
                      forward_ton_amount:(VarUInteger 16)
                      forward_payload:(Either Cell ^Cell) 
                      = InternalMsgBody;
@@ -101,7 +104,7 @@ int gas_consumption() asm "10000000 PUSHINT"; ;; 0.01 TON
 () receive_tokens (slice in_msg_body, slice sender_address, int my_ton_balance, int fwd_fee, int msg_value) impure {
   ;; NOTE we can not allow fails in action phase since in that case there will be
   ;; no bounce. Thus check and throw in computation phase.
-  (int balance, slice owner_address, slice jetton_master_address, cell jetton_wallet_code) = load_data();
+  (int balance, slice owner_address, slice jetton_master_address, cell jetton_wallet_code, int revision) = load_data();
   int query_id = in_msg_body~load_uint(64);
   int jetton_amount = in_msg_body~load_coins();
   balance += jetton_amount;
@@ -112,6 +115,7 @@ int gas_consumption() asm "10000000 PUSHINT"; ;; 0.01 TON
       |
       equal_slices(calculate_user_jetton_wallet_address(from_address, jetton_master_address, jetton_wallet_code), sender_address)
   );
+  int incoming_revision = in_msg_body~load_ref().begin_parse().preload_uint(32);
   int forward_ton_amount = in_msg_body~load_coins();
 
   int ton_balance_before_msg = my_ton_balance - msg_value;
@@ -149,14 +153,14 @@ int gas_consumption() asm "10000000 PUSHINT"; ;; 0.01 TON
       .store_uint(query_id, 64);
     send_raw_message(msg.end_cell(), 2);
   }
-
-  save_data(balance, owner_address, jetton_master_address, jetton_wallet_code);
+  revision = max(incoming_revision, revision);
+  save_data(balance, owner_address, jetton_master_address, jetton_wallet_code, revision);
 }
 
 () burn_tokens (slice in_msg_body, slice sender_address, int msg_value, int fwd_fee) impure {
   ;; NOTE we can not allow fails in action phase since in that case there will be
   ;; no bounce. Thus check and throw in computation phase.
-  (int balance, slice owner_address, slice jetton_master_address, cell jetton_wallet_code) = load_data();
+  (int balance, slice owner_address, slice jetton_master_address, cell jetton_wallet_code, int revision) = load_data();
   int query_id = in_msg_body~load_uint(64);
   int jetton_amount = in_msg_body~load_coins();
   slice response_address = in_msg_body~load_msg_addr();
@@ -184,18 +188,18 @@ int gas_consumption() asm "10000000 PUSHINT"; ;; 0.01 TON
 
   send_raw_message(msg.end_cell(), 64);
 
-  save_data(balance, owner_address, jetton_master_address, jetton_wallet_code);
+  save_data(balance, owner_address, jetton_master_address, jetton_wallet_code, revision);
 }
 
 () on_bounce (slice in_msg_body) impure {
   in_msg_body~skip_bits(32); ;; 0xFFFFFFFF
-  (int balance, slice owner_address, slice jetton_master_address, cell jetton_wallet_code) = load_data();
+  (int balance, slice owner_address, slice jetton_master_address, cell jetton_wallet_code, int revision) = load_data();
   int op = in_msg_body~load_uint(32);
   throw_unless(709, (op == op::internal_transfer()) | (op == op::burn_notification()));
   int query_id = in_msg_body~load_uint(64);
   int jetton_amount = in_msg_body~load_coins();
   balance += jetton_amount;
-  save_data(balance, owner_address, jetton_master_address, jetton_wallet_code);
+  save_data(balance, owner_address, jetton_master_address, jetton_wallet_code, revision);
 }
 
 () recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
@@ -236,6 +240,6 @@ int gas_consumption() asm "10000000 PUSHINT"; ;; 0.01 TON
   throw(0xffff);
 }
 
-(int, slice, slice, cell) get_wallet_data() method_id {
+(int, slice, slice, cell, int) get_wallet_data() method_id {
   return load_data();
 }
