@@ -20,6 +20,8 @@ int gas_consumption() asm "10000000 PUSHINT"; ;; 0.01 TON
   storage#_ balance:Coins owner_address:MsgAddressInt jetton_master_address:MsgAddressInt revision:uint32 jetton_wallet_code:^Cell = Storage;
 -}
 
+int MAX_VOTING_DURATION() asm "259200 PUSHINT";
+
 (int, slice, slice, cell, int) load_data() inline {
   slice ds = get_data().begin_parse();
   return (ds~load_coins(), ds~load_msg_addr(), ds~load_msg_addr(), ds~load_ref(), ds~load_uint(32));
@@ -116,6 +118,14 @@ int gas_consumption() asm "10000000 PUSHINT"; ;; 0.01 TON
       equal_slices(calculate_user_jetton_wallet_address(from_address, jetton_master_address, jetton_wallet_code), sender_address)
   );
   int incoming_revision = in_msg_body~load_ref().begin_parse().preload_uint(32);
+
+  ;; in general case we should just do
+  ;; throw_unless(789, incoming_revision < revision);
+  ;; but if we know that revision is time of lates voting
+  ;; and voting has expiration date we can accept outdated revisions as well
+  throw_unless(789, (incoming_revision < revision) | (incoming_revision + MAX_VOTING_DURATION() < now()) );
+  revision = max(incoming_revision, revision);
+
   int forward_ton_amount = in_msg_body~load_coins();
 
   int ton_balance_before_msg = my_ton_balance - msg_value;
@@ -153,7 +163,6 @@ int gas_consumption() asm "10000000 PUSHINT"; ;; 0.01 TON
       .store_uint(query_id, 64);
     send_raw_message(msg.end_cell(), 2);
   }
-  revision = max(incoming_revision, revision);
   save_data(balance, owner_address, jetton_master_address, jetton_wallet_code, revision);
 }
 
@@ -204,6 +213,7 @@ int gas_consumption() asm "10000000 PUSHINT"; ;; 0.01 TON
   int jetton_amount = in_msg_body~load_coins();
   balance += jetton_amount;
   save_data(balance, owner_address, jetton_master_address, jetton_wallet_code, revision);
+  ;; Since now bounces are not emergency, probably it will be better to notify owner?
 }
 
 () recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
