@@ -123,7 +123,9 @@ int MAX_VOTING_DURATION() asm "259200 PUSHINT";
   ;; throw_unless(789, incoming_revision < revision);
   ;; but if we know that revision is time of lates voting
   ;; and voting has expiration date we can accept outdated revisions as well
-  throw_unless(789, (incoming_revision < revision) | (incoming_revision + MAX_VOTING_DURATION() < now()) );
+  ifnot (balance == 0) {
+    throw_unless(789, (incoming_revision < revision) | (incoming_revision + MAX_VOTING_DURATION() < now()) );
+  }
   revision = max(incoming_revision, revision);
 
   int forward_ton_amount = in_msg_body~load_coins();
